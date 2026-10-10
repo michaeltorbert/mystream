@@ -202,7 +202,11 @@ test('Duke broadcast schedule: one-minute sanitized cache, age added per deliver
   assert.equal(undated.ageMs,null);
   assert.equal((await (await metadataGateway(makeRequest('/api/broadcast/schedule/duke'),{...options,fetcher:async()=>{throw Error('cache should avoid upstream');}})).json()).ageMs,null);
   assert.equal((await metadataGateway(makeRequest('/api/broadcast/schedule/duke'),{fetcher})).status,502,'a missing private catalog is unavailable, never an empty listing');
-  assert.equal((await metadataGateway(makeRequest('/api/broadcast/schedule/duke',{signal:AbortSignal.timeout(5)}),{fetcher:()=>new Promise(()=>{}),catalog})).status,502,'caller abort covers the provider requests');
+  // The caller leaves while the provider request is in flight; no timer is involved.
+  const caller=new AbortController();let providerSignal;
+  const leaving=(url,init)=>{providerSignal=init.signal;queueMicrotask(()=>caller.abort(Error('caller left')));return new Promise(()=>{});};
+  assert.equal((await metadataGateway(makeRequest('/api/broadcast/schedule/duke',{signal:caller.signal}),{fetcher:leaving,catalog})).status,502,'caller abort covers the provider requests');
+  assert.equal(providerSignal.aborted,true,'the in-flight provider request is cancelled');
   assert.ok(!JSON.stringify(records).includes('player.example')&&!JSON.stringify(records).includes('SECRET'));
 });
 test('Worker loads the private catalog for the exact Duke schedule route and reports only its family',async()=>{

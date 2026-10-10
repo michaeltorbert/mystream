@@ -63,7 +63,7 @@ function harness(t) {
     createNowPlaying, nowPlayingArtwork, createScoreboard, listenTeams, resolveSources, officialLink, createListenSession, failureKind, TIMELINE_NOTICE, FALLBACK_NOTICE, ...shell,
     setupGameTiming: () => ({ start() {}, stop() {}, reset() {}, invalidate() {}, render() {} }),
     checkPlaylist: url => { h.probes.push({ url, labels: h.labels() }); if (!h.holdProbe) return Promise.resolve('ready'); const gate = deferred(); h.releaseProbe = () => gate.resolve('ready'); return gate.promise; },
-    createGameStatus: options => createGameStatus({ ...options, clock, timeout: () => new AbortController().signal,
+    createBroadcastCountdown: () => ({ setSchool() {}, tick() {}, suspend() {}, resume() {}, stop() {} }), createGameStatus: options => createGameStatus({ ...options, clock, timeout: () => new AbortController().signal,
       setTimer: (fn, ms) => { const timer = { fn, ms, cancelled: false, fired: false }; h.statusTimers.push(timer); return timer; },
       clearTimer: timer => { if (timer) timer.cancelled = true; } }) });
   h.$ = id => w.document.getElementById(id);

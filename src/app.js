@@ -14,6 +14,7 @@ import { setupShell, createConfirm, setDisclosure, closeDialog } from './ui-shel
 import { listenTeams, resolveSources, officialLink } from './listen-sources.js';
 import { createListenSession, failureKind } from './listen-session.js';
 import { createGameStatus } from './game-status.js';
+import { createBroadcastCountdown } from './broadcast-countdown.js';
 import { TIMELINE_NOTICE, FALLBACK_NOTICE } from './hls-timeline.js';
 const $ = id => document.getElementById(id);
 let storage;
@@ -106,6 +107,8 @@ const player = new Player(update, (event, detail) => {
 });
 // Label-only game status for the Game choice; it never affects readiness, audio or timing.
 const gameStatus = createGameStatus({ read: metadata, enabled: () => document.visibilityState !== 'hidden', onUpdate: labels => catalog.relabel(labels) });
+// The committed school's next network broadcast. It writes only its own line; never audio, catalog or status.
+const countdown = createBroadcastCountdown({ read: metadata, el: $('broadcast-next'), enabled: () => document.visibilityState !== 'hidden' });
 const catalog = setupHomestream({ guard: liveGuard, school: () => currentTeam().name, teamId: () => currentTeam().catalogId,
   // A game change ends the intent and returns Source to Automatic; a reload ends the intent only.
   onChange: kind => { disconnect(); if (kind === 'game') session.setMode('auto'); resetAlignment(); render(); },
@@ -286,6 +289,7 @@ function teamChanged() {
   if (teams[selected]) try { storage?.setItem('mystream.team', selected); } catch {}
   catalog.setEnabled(!!currentTeam().catalogId);
   rebuildSources(); showSource(); notice(''); render();
+  countdown.setSchool(selected);
 }
 function sourceChanged() {
   const id = $('feed').value;
@@ -611,7 +615,7 @@ $('clear-confirm').onclick = () => {
   $('clear-confirm').hidden = true; render();
 };
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') gameStatus.suspend(); else { gameStatus.resume(); if (!teamsLoaded) loadTeams(); }
+  if (document.visibilityState === 'hidden') { gameStatus.suspend(); countdown.suspend(); } else { gameStatus.resume(); countdown.resume(); if (!teamsLoaded) loadTeams(); }
   if (!active) return;
   needsCheck = true; log.boundary(document.hidden ? 'hidden' : 'visible', state);
   if (document.hidden && state?.holding) player.command('invalidate').catch(() => {});
@@ -620,7 +624,7 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => { log.boundary('hidden', state); });
 setInterval(() => { if (active && state) log.heartbeat(state, !document.hidden && player.context?.state === 'running'); }, 30000);
-setInterval(() => { if (document.visibilityState !== 'hidden') gameStatus.tick(); }, 1000);
+setInterval(() => { if (document.visibilityState !== 'hidden') { gameStatus.tick(); countdown.tick(); } }, 1000);
 setupShell({ doc: document, onMenuOpen: () => { $('menu-reconnect').disabled = !((active && !connecting) || session.pending); } });
 teamChanged(); refreshSessions(); render();
 

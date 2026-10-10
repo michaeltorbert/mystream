@@ -14,6 +14,7 @@ import { listenTeams, resolveSources, officialLink } from '../src/listen-sources
 import { createListenSession, failureKind } from '../src/listen-session.js';
 import { TIMELINE_NOTICE, FALLBACK_NOTICE } from '../src/hls-timeline.js';
 import * as shell from '../src/ui-shell.js';
+import { createBroadcastCountdown } from '../src/broadcast-countdown.js';
 globalThis.__GATEWAY_ORIGIN__='https://gateway.example';
 const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
 const source=readFileSync(new URL('../src/app.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'');
@@ -48,13 +49,15 @@ function harness(t, catalogFactory, extra={}) {
   canMove(){return true;}
  }
  const fakeTiming={starts:[],stops:0,resets:0,start(game){this.starts.push(game.id);},stop(){this.stops++;},reset(){this.resets++;},invalidate(){},render(){}};
+ // Records the committed-school and lifecycle calls; tests may inject the real controller through extra.
+ const fakeCountdown={schools:[],suspends:0,resumes:0,ticks:0,setSchool(key){this.schools.push(key);},suspend(){this.suspends++;},resume(){this.resumes++;},tick(){this.ticks++;},stop(){}};
  Object.assign(w,{setupGameTiming:options=>{fakeTiming.options=options;return fakeTiming;},setupHomestream:callbacks=>(catalog=catalogFactory ? catalogFactory(callbacks) : {ready:null,status:'unavailable',stop(){},setEnabled(){},relabel(){},refresh(){}}),
   PlaybackMemory,SessionLog,teams,getSources,Player:FakePlayer,demoURL:()=> 'blob:demo',setupArchive:()=>{},listenTeams,resolveSources,officialLink,createListenSession,failureKind,TIMELINE_NOTICE,FALLBACK_NOTICE,
-  createGameStatus:()=>({setGames(){},clear(){},suspend(){},resume(){},tick(){},stop(){}}),
+  createGameStatus:()=>({setGames(){},clear(){},suspend(){},resume(){},tick(){},stop(){}}),createBroadcastCountdown:options=>{fakeCountdown.options=options;return fakeCountdown;},
   createNowPlaying,nowPlayingArtwork,createScoreboard,metadataURL,configuredGatewayOrigin,gatewayOptions,readJSON:async()=>{throw Error('no metadata in recovery tests');},...shell,...extra});
  w.localStorage.setItem('homecall.position.live.duke-leanstream',JSON.stringify({version:1,value:35,savedAt:Date.now()-20000}));
  w.URL.revokeObjectURL=()=>{};w.eval(source);const $=id=>w.document.getElementById(id);
- return {w,player,timing:fakeTiming,get catalog(){return catalog},$,prompt:()=>$('confirm-dialog').hasAttribute('open'),proceed:()=>$('confirm-continue').click(),dismiss:()=>$('confirm-cancel').click(),
+ return {w,player,timing:fakeTiming,countdown:fakeCountdown,get catalog(){return catalog},$,prompt:()=>$('confirm-dialog').hasAttribute('open'),proceed:()=>$('confirm-continue').click(),dismiss:()=>$('confirm-cancel').click(),
   log:()=>{$('preview').click();return JSON.parse($('export').value);}};
 }
 const tail=url=>url.split('/').at(-1);
@@ -543,4 +546,39 @@ test('F3 local constructor and graph setup failures hold the same candidate with
   h.$('connect').click();await flush();assert.equal(h.player.starts.length,2);
   assert.equal(h.player.starts[1].url,GAME.url,message);assert.equal(h.player.starts[1].hls,true);
  }
+});
+
+// Next-broadcast countdown (issue #32): school-level, lifecycle-only wiring that never touches Listen.
+const visibility=(h,value)=>{Object.defineProperty(h.w.document,'visibilityState',{value,configurable:true});h.w.document.dispatchEvent(new h.w.Event('visibilitychange'));};
+test('the countdown follows only the committed school, keeps pending confirmations and ignores source-only changes',async t=>{
+ const h=harness(t);assert.deepEqual(h.countdown.schools,['duke']);assert.equal(h.countdown.options.el,h.$('broadcast-next'));
+ h.$('team').value='miami';h.$('team').onchange();assert.deepEqual(h.countdown.schools,['duke','miami']);
+ h.$('team').value='duke';h.$('team').onchange();h.$('connect').click();await settle();
+ h.$('team').value='vt';h.$('team').onchange();assert.equal(h.prompt(),true);h.dismiss();
+ assert.deepEqual(h.countdown.schools,['duke','miami','duke'],'a declined team change keeps the committed school');assert.equal(h.$('team').value,'duke');
+ h.$('team').value='vt';h.$('team').onchange();h.proceed();assert.deepEqual(h.countdown.schools.at(-1),'vt');
+ h.$('team').value='duke';h.$('team').onchange();const count=h.countdown.schools.length;
+ h.$('feed').value='duke-wtib';h.$('feed').onchange();assert.equal(h.countdown.schools.length,count,'a source change is not a school change');
+ visibility(h,'hidden');assert.equal(h.countdown.suspends,1);visibility(h,'visible');assert.equal(h.countdown.resumes,1);
+});
+test('countdown ticks, polls, zero crossing and errors never change playback, delay, notices or Source',async t=>{
+ let controller,wall=Date.now(),mono=0;const reads=[],answers=[];
+ const read=path=>{reads.push(path);const answer=answers.shift();return answer instanceof Error?Promise.reject(answer):Promise.resolve(answer);};
+ const schedule=start=>({schemaVersion:1,school:'duke',state:'upcoming',event:{id:'e1',label:'Football: Visitor',kind:'game',broadcastStart:start},checkedAt:wall,ageMs:0});
+ answers.push(schedule(wall+3000));
+ const h=harness(t,undefined,{createBroadcastCountdown:options=>(controller=createBroadcastCountdown({...options,read,now:()=>wall,mono:()=>mono,setTimer:()=>0,clearTimer(){},formatTime:()=>'soon'}))});
+ await flush();assert.match(h.$('broadcast-next').textContent,/^Duke network · Next broadcast starts in 3 s/);assert.equal(h.$('broadcast-next').hidden,false);
+ h.$('connect').click();await settle();
+ h.player.update({delay:35,available:40,paused:false,holding:false,ingesting:true,restoring:null});
+ const snapshot=()=>({starts:h.player.starts.length,command:h.player.lastCommand,status:h.$('status').textContent,notice:h.$('notice').textContent,source:h.$('source-current').textContent,
+  station:h.$('station').textContent,feed:h.$('feed').value,team:h.$('team').value,delay:h.w.localStorage.getItem('homecall.position.live.duke-leanstream'),prompt:h.prompt(),refreshes:h.catalog.refreshes});
+ const before=snapshot();
+ answers.push(schedule(wall+3000),Error('502'));
+ for(let i=0;i<5;i++){wall+=1000;mono+=1000;controller.tick();await settle();}
+ assert.match(h.$('broadcast-next').textContent,/start time reached for Football: Visitor\. This does not confirm audio or game status\./);
+ controller.suspend();controller.resume();await flush();
+ assert.equal(h.$('broadcast-next').textContent,'Duke network · Next broadcast time unknown.');
+ assert.deepEqual(reads,['broadcast/schedule/duke','broadcast/schedule/duke','broadcast/schedule/duke']);
+ assert.deepEqual(snapshot(),before);assert.equal(h.$('status').textContent,'Playing');
+ h.$('team').value='miami';h.$('team').onchange();h.proceed();assert.equal(h.$('broadcast-next').hidden,true);assert.equal(reads.length,3);
 });

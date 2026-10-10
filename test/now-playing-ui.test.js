@@ -87,7 +87,7 @@ function live(t, { mediaSession = true, games = { [GT]: { game: GT_GAME, list: G
   if (mediaSession) { Object.defineProperty(w.navigator, 'mediaSession', { value: h.ms, configurable: true }); w.MediaMetadata = FakeMetadata; }
   w.URL.revokeObjectURL = () => {};
   Object.assign(w, { setupGameTiming: () => ({ start() {}, stop() {}, reset() {}, invalidate() {}, render() {} }), setupArchive: options => { h.archiveOptions = options; }, setupHomestream: catalogFactory,
-    createGameStatus: () => ({ setGames() {}, clear() {}, suspend() {}, resume() {}, tick() {}, stop() {} }), listenTeams, resolveSources, officialLink, createListenSession, failureKind, TIMELINE_NOTICE, FALLBACK_NOTICE,
+    createBroadcastCountdown: () => ({ setSchool() {}, tick() {}, suspend() {}, resume() {}, stop() {} }), createGameStatus: () => ({ setGames() {}, clear() {}, suspend() {}, resume() {}, tick() {}, stop() {} }), listenTeams, resolveSources, officialLink, createListenSession, failureKind, TIMELINE_NOTICE, FALLBACK_NOTICE,
     PlaybackMemory, SessionLog, teams, getSources, Player: FakePlayer, demoURL: () => 'blob:demo', createNowPlaying, nowPlayingArtwork, createScoreboard, readJSON, metadataURL, configuredGatewayOrigin, gatewayOptions, ...shell });
   w.eval(strip('../src/app.js'));
   h.$ = id => w.document.getElementById(id);
